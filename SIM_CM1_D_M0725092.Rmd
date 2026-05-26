@@ -1,0 +1,377 @@
+---
+title: "Analisis Perbedaan Pendapatan tiap Kategori Film"
+subtitle: "Database Sakila"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output:
+  html_document:
+    theme: flatly
+    highlight: tango
+    toc: true
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+    toc_depth: 3
+    number_sections: false
+    self_contained: true
+    mathjax: default
+---
+
+```{css, echo=FALSE}
+/* ===== FONT ===== */
+
+* {
+  font-family: "Times New Roman", Times, serif !important;
+}
+
+/* ===== BACKGROUND ===== */
+body {
+  font-size: 15px;
+  color: #1b3a1f;
+  background-color: #e8f5e9;
+}
+
+/* ===== JUDUL ===== */
+h1.title {
+  font-size: 2em;
+  color: #1b5e20;
+  border-bottom: 3px solid #2e7d32;
+  padding-bottom: 10px;
+  font-weight: bold;
+}
+
+h3.subtitle, h4.author, h4.date {
+  color: #388e3c;
+}
+
+h1, h2, h3, h4 {
+  color: #1b5e20;
+  font-weight: bold;
+}
+
+/* ===== TOC ===== */
+.tocify {
+  background-color: #c8e6c9 !important;
+  border: 1px solid #81c784 !important;
+  border-radius: 8px;
+}
+
+.tocify-item a {
+  color: #1b5e20 !important;
+}
+
+.tocify-item.active a {
+  background-color: #a5d6a7 !important;
+  color: #1b5e20 !important;
+}
+
+/* ===== KOTAK SECTION ===== */
+.section-box {
+  background: #f1f8e9;
+  border-left: 5px solid #388e3c;
+  border-radius: 6px;
+  padding: 15px 20px;
+  margin: 20px 0;
+  box-shadow: 0 2px 8px rgba(46,125,50,0.10);
+}
+
+.result-box {
+  background: #dcedc8;
+  border: 1px solid #8bc34a;
+  border-radius: 8px;
+  padding: 15px 20px;
+  margin: 15px 0;
+}
+
+.warning-box {
+  background: #f9fbe7;
+  border: 1px solid #cddc39;
+  border-radius: 8px;
+  padding: 15px 20px;
+  margin: 15px 0;
+}
+
+/* ===== TABEL ===== */
+table {
+  background-color: #f1f8e9 !important;
+  border: 1px solid #a5d6a7 !important;
+}
+
+thead {
+  background-color: #2e7d32 !important;
+  color: white !important;
+}
+
+tbody tr:nth-child(even) {
+  background-color: #c8e6c9 !important;
+}
+
+/* ===== CODE ===== */
+code {
+  color: #1b5e20;
+  background: #c8e6c9;
+  padding: 2px 5px;
+  border-radius: 3px;
+}
+
+pre {
+  background-color: #f1f8e9 !important;
+  border: 1px solid #a5d6a7;
+  border-radius: 6px;
+}
+
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo      = TRUE,
+  warning   = FALSE,
+  message   = FALSE,
+  fig.align = "center",
+  fig.width = 9,
+  fig.height = 5.5,
+  dpi       = 150
+)
+```
+
+<div class="section-box">
+<h2>Biodata Penulis</h2>
+
+| | |
+|---|---|
+| **Nama** |  Arda Nadhifa Fikri |
+| **NIM** | M0725092 |
+| **Kelas** | D |
+| **Program Studi** | Statistika |
+</div>
+---
+
+# Pendahuluan
+
+<div class="section-box">
+Laporan ini menganalisis data dari Database Sakila untuk menguji apakah terdapat perbedaan rata-rata pendapatan yang signifikan antar kategori film.
+
+**Variabel yang digunakan:**
+
+| Variabel | Sumber Tabel | Keterangan |
+|---|---|---|
+| `category.name` | `category` | Nama kategori film |
+| `payment.amount` | `payment` | Nilai pembayaran per transaksi |
+| `rental`, `inventory`, `film_category` | — | Tabel relasi penghubung |
+
+**Hipotesis yang diuji:**
+
+$$H_0 : \mu_1 = \mu_2 = \cdots = \mu_k \quad \text{(rata-rata pendapatan tiap kategori sama)}$$
+
+$$H_1 : \exists \, i \neq j \text{ s.t. } \mu_i \neq \mu_j \quad \text{(ada perbedaan rata-rata pendapatan antar kategori)}$$
+
+dengan $\alpha = 0{,}05$.
+</div>
+
+---
+
+# Persiapan Data
+
+## Memuat Package
+
+```{r load-packages}
+library(DBI)
+library(odbc)
+library(dplyr)
+library(ggplot2)
+library(scales)
+library(knitr)
+library(kableExtra)
+```
+
+## Koneksi ke Database Sakila
+
+```{r koneksi-db}
+con <- DBI::dbConnect(odbc::odbc(), 
+       Driver = "MySQL ODBC 8.0 ANSI Driver", 
+       Server = "127.0.0.1", 
+       Database = "sakila", 
+       UID = "root", 
+       PWD = "A220906Q", 
+       Port = 3306)
+```
+
+## Query Pengambilan Data
+
+Data diambil per transaksi (bukan per kategori) agar tersedia distribusi nilai `amount` untuk keperluan uji statistik.
+
+```{r query-data}
+data1 <- dbGetQuery(con,"
+  SELECT
+    c.name          AS kategori,
+    p.amount        AS pendapatan
+  FROM category      c
+  JOIN film_category fc ON c.category_id  = fc.category_id
+  JOIN film          f  ON fc.film_id     = f.film_id
+  JOIN inventory     i  ON f.film_id      = i.film_id
+  JOIN rental        r  ON i.inventory_id = r.inventory_id
+  JOIN payment       p  ON r.rental_id    = p.rental_id
+")
+
+data1$kategori <- as.factor(data1$kategori)
+```
+
+---
+
+# Deskripsi Data
+
+## Statistik Deskriptif per Kategori
+
+```{r deskriptif}
+data_desc <- data1 %>%
+  group_by(kategori) %>%
+  summarise(
+    n            = n(),
+    mean         = round(mean(pendapatan), 4),
+    median       = round(median(pendapatan), 4),
+    sd           = round(sd(pendapatan), 4),
+    min          = round(min(pendapatan), 2),
+    max          = round(max(pendapatan), 2)
+  ) %>%
+  arrange(desc(mean))
+
+data_desc %>%
+  kable(
+    col.names = c("Kategori", "n", "Mean (USD)", "Median (USD)",
+                  "SD (USD)", "Min (USD)", "Max (USD)"),
+    caption   = "Tabel 1. Statistik Deskriptif Pendapatan per Kategori Film"
+  ) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  row_spec(0, background = "#2e7d32", color = "white", bold = TRUE) %>%
+  row_spec(1, background = "#dcedc8", bold = TRUE)
+```
+
+---
+
+# Visualisasi Data
+
+```{r plot-boxplot, fig.cap="Gambar 1. Distribusi Pendapatan per Kategori Film (Boxplot)"}
+ggplot(data1, aes(x = reorder(kategori, pendapatan, FUN = mean),
+                   y = pendapatan,
+                   fill = reorder(kategori, pendapatan, FUN = mean))) +
+  geom_boxplot(outlier.shape = 21, outlier.size = 1.2,
+               outlier.alpha = 0.4, show.legend = FALSE) +
+  stat_summary(fun = mean, geom = "point", shape = 23,
+               size = 2.5, fill = "white", color = "#1b5e20") +
+  scale_fill_manual(values = colorRampPalette(c("#c8e6c9", "#1b5e20"))(16)) +
+  scale_y_continuous(labels = dollar_format()) +
+  coord_flip() +
+  labs(
+    title    = "Distribusi Pendapatan per Kategori Film",
+    subtitle = "Berlian putih (◇) menunjukkan nilai rata-rata",
+    x        = NULL,
+    y        = "Pendapatan per Transaksi (USD)"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    text               = element_text(family = "serif"),
+    plot.title         = element_text(face = "bold", size = 15, color = "#1b5e20"),
+    plot.subtitle      = element_text(color = "#388e3c"),
+    panel.grid.major.y = element_blank(),
+    plot.background    = element_rect(fill = "#e8f5e9", color = NA),
+    panel.background   = element_rect(fill = "#f1f8e9", color = NA)
+  )
+```
+
+---
+
+# Uji Hipotesis
+
+## Uji Normalitas (Shapiro-Wilk per Kategori)
+
+Sebelum menentukan uji yang digunakan, dilakukan uji normalitas Shapiro-Wilk pada masing-masing kelompok kategori.
+
+```{r uji-normalitas}
+normalitas <- data1 %>%
+  group_by(kategori) %>%
+  summarise(
+    p_value    = shapiro.test(sample(pendapatan, min(n(), 5000)))$p.value,
+    statistic  = shapiro.test(sample(pendapatan, min(n(), 5000)))$statistic
+  ) %>%
+  mutate(
+    normal = ifelse(p_value > 0.05, "Ya", "Tidak")
+  )
+
+normalitas %>%
+  mutate(
+    p_value   = round(p_value, 6),
+    statistic = round(statistic, 4)
+  ) %>%
+  kable(
+    col.names = c("Kategori", "p-value", "W Statistik", "Normal (α=0.05)?"),
+    caption   = "Tabel 2. Hasil Uji Normalitas Shapiro-Wilk per Kategori"
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) %>%
+  row_spec(0, background = "#2e7d32", color = "white", bold = TRUE)
+```
+
+> Keputusan prasyarat: Jika mayoritas kategori tidak memenuhi asumsi normalitas ($p < 0{,}05$), maka digunakan uji non-parametrik Kruskal-Wallis sebagai alternatif ANOVA.
+
+## Uji Utama
+
+### Uji Kruskal-Wallis (Non-Parametrik)
+
+Digunakan karena data pendapatan per transaksi pada umumnya tidak terdistribusi normal (nilai `amount` yang diskrit dan terbatas).
+
+```{r kruskal-wallis}
+hasil_kw <- kruskal.test(pendapatan ~ kategori, data = data1)
+hasil_kw
+```
+
+**Statistik uji Kruskal-Wallis:**
+
+$$H = \frac{12}{N(N+1)} \sum_{i=1}^{k} \frac{R_i^2}{n_i} - 3(N+1)$$
+
+di mana $N$ = total observasi, $k$ = jumlah kelompok, $R_i$ = jumlah peringkat kelompok ke-$i$, $n_i$ = ukuran kelompok ke-$i$.
+
+```{r keputusan-kw}
+cat("H statistik :", round(hasil_kw$statistic, 4), "\n")
+cat("Derajat bebas:", hasil_kw$parameter, "\n")
+cat("p-value      :", format(hasil_kw$p.value, scientific = TRUE), "\n\n")
+
+if (hasil_kw$p.value < 0.05) {
+  cat("Keputusan: TOLAK H0\n")
+  cat("Kesimpulan: Terdapat perbedaan rata-rata pendapatan yang signifikan",
+      "antar kategori film (α = 0.05).\n")
+} else {
+  cat("Keputusan: GAGAL TOLAK H0\n")
+  cat("Kesimpulan: Tidak terdapat cukup bukti untuk menyatakan adanya",
+      "perbedaan rata-rata pendapatan antar kategori film.\n")
+}
+```
+
+---
+
+# Interpretasi Hasil
+
+<div class="result-box">
+
+## Kesimpulan Uji Hipotesis
+
+Berdasarkan uji Kruskal-Wallis dengan $\alpha = 0{,}05$:
+
+- Nilai statistik $H$ yang besar disertai $p\text{-value} \ll 0{,}05$ memberikan bukti yang cukup kuat untuk menolak $H_0$.
+- Artinya, terdapat perbedaan rata-rata pendapatan yang signifikan secara statistik antar kategori film di database Sakila.
+- Dari boxplot (Gambar 1), kategori dengan rata-rata pendapatan tertinggi terlihat di bagian atas grafik, namun perbedaan antar kategori relatif kecil karena nilai `amount` per transaksi memiliki rentang yang terbatas.
+- Dapat disimpulkan bahwa meskipun terbukti terdapat perbedaan signifikan secara statistik, nilai rata-rata pendapatan tiap transaksi antar kategori relatif kecil, mengingat nilai `amount` dalam database Sakila memiliki rentang yang terbatas.
+
+</div>
+
+
+
+---
+
+```{r tutup-koneksi, include=FALSE}
+dbDisconnect(con)
+```
+
+---
+
+*Laporan dibuat menggunakan R Markdown · Database: MySQL Sakila · `r format(Sys.time(), "%d %B %Y %H:%M")`*
